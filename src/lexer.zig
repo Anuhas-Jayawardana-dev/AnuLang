@@ -1,11 +1,11 @@
 const std = @import("std");
 
 pub const TokenType = enum {
-    none,id,num,eof,
-    lparen,rparen,comma,assign,
+    none,id,num,string,eof,keyword_true,keyword_false,
+    lparen,rparen,comma,assign,period,concat,
     func,end,ret,keyword_if,keyword_else,keyword_elseif,then,keyword_while,keyword_do,
     add,sub,mul,div,
-    equals,nequals,bang,
+    equals,nequals,bang,lt,gt,
     print,
 };
 
@@ -20,7 +20,8 @@ pub const Token = struct {
 
     pub fn is_operator(self:*Token) bool {
         return (self.kind == .add or self.kind == .sub or self.kind == .mul or self.kind == .div or self.kind == .equals
-                or self.kind == .nequals or self.kind == .bang);
+                or self.kind == .nequals or self.kind == .bang or self.kind == .concat
+                or self.kind == .lt or self.kind == .gt);
     }
 };
 
@@ -71,6 +72,9 @@ pub const Lexer = struct {
         if (std.mem.eql(u8,slice,"while")) tk_type = .keyword_while;
         if (std.mem.eql(u8,slice,"do")) tk_type = .keyword_do;
 
+        if (std.mem.eql(u8,slice,"true")) tk_type = .keyword_true;
+        if (std.mem.eql(u8,slice,"false")) tk_type = .keyword_false;
+
         if (std.mem.eql(u8,slice,"print")) tk_type = .print;
 
         return Token.init(tk_type,slice,line);
@@ -91,6 +95,33 @@ pub const Lexer = struct {
         }
     }
 
+    fn collect_string(self:*Lexer) Token {
+        const begin = self.i;
+        _ = self.advance();
+        while (self.c != '"') {
+            const c = self.advance();
+            if (std.ascii.isWhitespace(c) and c != ' ') {
+                std.debug.print("ERROR: in line {d}, unterminated string\n",.{self.line});
+                std.process.exit(0);
+            }
+        }
+
+        const end = self.i;
+        const line = self.line;
+        const slice = self.code[begin..end];
+        
+        _ = self.advance();
+
+        return Token.init(.string,slice,line);
+    }
+
+    pub fn skip_comment(self:*Lexer) void {
+        while (self.c != '\n') {
+            _ = self.advance();   
+        }
+    }
+
+
     pub fn tokenize(self:*Lexer) void {
         while (self.c != 0) {
             if (std.ascii.isWhitespace(self.c)) {
@@ -107,6 +138,9 @@ pub const Lexer = struct {
             }
             const c = self.advance();
             switch (c) {
+                '<' => {self.tokens.append(Token.init(.lt,"<",self.line)) catch unreachable;continue;},
+                '>' => {self.tokens.append(Token.init(.gt,">",self.line)) catch unreachable;continue;},
+
                 '(' => {self.tokens.append(Token.init(.lparen,"(",self.line)) catch unreachable;continue;},
                 ')' => {self.tokens.append(Token.init(.rparen,")",self.line)) catch unreachable;continue;},
                 ',' => {self.tokens.append(Token.init(.comma,",",self.line)) catch unreachable;continue;},
@@ -114,6 +148,7 @@ pub const Lexer = struct {
                 '-' => {self.tokens.append(Token.init(.sub,"-",self.line)) catch unreachable;continue;},
                 '*' => {self.tokens.append(Token.init(.mul,"*",self.line)) catch unreachable;continue;},
                 '/' => {self.tokens.append(Token.init(.div,"/",self.line)) catch unreachable;continue;},
+                '"' => {self.tokens.append(self.collect_string()) catch unreachable; continue;},
                 '=' => {
                     if (self.c == '=') {
                         self.tokens.append(Token.init(.equals,"==",self.line)) catch unreachable;
@@ -121,6 +156,16 @@ pub const Lexer = struct {
                         continue;
                     } else {
                         self.tokens.append(Token.init(.assign,"=",self.line)) catch unreachable;
+                        continue;
+                    }
+                },
+                '.' => {
+                    if (self.c == '.') {
+                        self.tokens.append(Token.init(.concat,"..",self.line)) catch unreachable;
+                        _ = self.advance();
+                        continue;
+                    } else {
+                        self.tokens.append(Token.init(.period,".",self.line)) catch unreachable;
                         continue;
                     }
                 },
@@ -134,6 +179,7 @@ pub const Lexer = struct {
                         continue;
                     }
                 },
+                '#' => {self.skip_comment(); continue;},
                 else => {
                     std.debug.print("ERROR: in line {d}, undefined symbol {c}\n",.{self.line,c});
                     std.process.exit(0);

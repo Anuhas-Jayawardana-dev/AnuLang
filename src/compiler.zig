@@ -4,23 +4,11 @@ const Lexer = lex.Lexer;
 const Token = lex.Token;
 const TokenType = lex.TokenType;
 
-pub const InstructionType = enum {
-    push,pop,store,load,jump,ret,gload,gstore,
-    add,sub,mul,div,print,
-    begin_function,end_function,
-    jump_if_equal,jump_if_nequal,
-    not,nequals,equals,
-};
-
-pub const Instruction = struct {
-    kind: InstructionType,
-    value: usize,
-    line: usize,
-
-    pub fn init(kind:InstructionType,value:usize,line:usize) Instruction {
-        return .{.kind=kind,.value=value,.line=line};
-    }
-};
+const i = @import("instruction.zig");
+const Instruction = i.Instruction;
+const InstructionType = i.InstructionType;
+const Value = i.Value;
+const ValueType = i.ValueType;
 
 pub const Local = struct {
     depth: usize = 1,
@@ -91,7 +79,7 @@ pub const Compiler = struct {
         _ = self.expect(.func,"func");
         const name = self.expect(.id,"identifier");
 
-        self.instructions.append(Instruction.init(.begin_function,0,self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.begin_function,Value.number(0),self.current.line)) catch unreachable;
 
         if (self.functions.contains(name.value)) {
             std.debug.print("ERROR: in line {d}, redefinition of function {s}\n",.{name.line,name.value});
@@ -113,7 +101,7 @@ pub const Compiler = struct {
 
             const id = self.locals.count();
             self.locals.put(param.value,Local.init(id,self.depth)) catch unreachable;
-            self.instructions.append(Instruction.init(InstructionType.store,id,param.line)) catch unreachable;
+            self.instructions.append(Instruction.init(InstructionType.store,Value.number(id),param.line)) catch unreachable;
             
             func.params += 1;
             if (self.current.kind != .rparen) _ = self.expect(.comma,",");
@@ -129,10 +117,10 @@ pub const Compiler = struct {
         _ = self.expect(.end,"end");
 
         if (self.instructions.items[self.instructions.items.len - 1].kind != .ret) {
-            self.instructions.append(Instruction.init(.ret,0,self.current.line)) catch unreachable;
+            self.instructions.append(Instruction.init(.ret,Value.nil(),self.current.line)) catch unreachable;
         }
 
-        self.instructions.append(Instruction.init(.end_function,0,self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.end_function,Value.nil(),self.current.line)) catch unreachable;
 
         self.end_scope();
     }
@@ -162,7 +150,7 @@ pub const Compiler = struct {
 
         _ = self.expect(.rparen,")");
 
-        self.instructions.append(Instruction.init(.jump,func.id,self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.jump,Value.number(func.id),self.current.line)) catch unreachable;
     }
 
     fn expression(self:*Compiler,optional:bool) void {
@@ -173,7 +161,16 @@ pub const Compiler = struct {
                 if (self.current.kind == .num) {
                     const token = self.expect(self.current.kind,"number");
                     const number = std.fmt.parseInt(usize,token.value,10) catch unreachable;
-                    self.instructions.append(Instruction.init(.push,number,token.line)) catch unreachable;
+                    self.instructions.append(Instruction.init(.push,Value.number(number),token.line)) catch unreachable;
+                }
+                else if (self.current.kind == .string) {
+                    const token = self.expect(self.current.kind,"string");
+                    self.instructions.append(Instruction.init(.push,Value.string(token.value),token.line)) catch unreachable;
+                }
+                else if (self.current.kind == .keyword_true or self.current.kind == .keyword_false) {
+                    const token = self.expect(self.current.kind,"boolean");
+                    const boolean:usize = if(token.kind == .keyword_true) 1 else 0;
+                    self.instructions.append(Instruction.init(.push,Value.boolean(boolean),token.line)) catch unreachable;
                 }
                 else if (self.current.kind == .id) {
                     if (self.peek().kind == .lparen) {
@@ -186,7 +183,7 @@ pub const Compiler = struct {
                         }
                         const id = if (self.globals.contains(token.value)) self.globals.get(token.value).? else self.locals.get(token.value).?.id;
                         const kind = if (self.globals.contains(token.value)) InstructionType.gload else InstructionType.load;
-                        self.instructions.append(Instruction.init(kind,id,token.line)) catch unreachable;
+                        self.instructions.append(Instruction.init(kind,Value.number(id),token.line)) catch unreachable;
                     }
                 } else {
                     if (optional) return else _ = self.expect(.none,"value");
@@ -208,9 +205,12 @@ pub const Compiler = struct {
                     .equals => InstructionType.equals,
                     .nequals => InstructionType.nequals,
                     .bang => InstructionType.not,
+                    .lt => InstructionType.lt,
+                    .gt => InstructionType.gt,
+                    .concat => InstructionType.concat,
                     else => InstructionType.add
                 };
-                recent_instruction = Instruction.init(itype,0,op.line);
+                recent_instruction = Instruction.init(itype,Value.nil(),op.line);
             }
             expect_value = !expect_value;
         }
@@ -226,7 +226,7 @@ pub const Compiler = struct {
             self.instructions.items[self.last_if_indices.pop().?].value = self.instructions.items.len;    
         }
 
-        self.instructions.append(Instruction.init(.jump_if_nequal, 0, self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.jump_if_nequal, Value.number(0), self.current.line)) catch unreachable;
         self.last_if_indices.append(self.instructions.items.len - 1) catch unreachable;
 
         while (self.current.kind != .end and self.current.kind != .keyword_elseif and self.current.kind != .keyword_else) {
@@ -237,7 +237,7 @@ pub const Compiler = struct {
             _ = self.expect(.keyword_else, "else");
                             
             self.instructions.items[self.last_if_indices.pop().?].value = self.instructions.items.len;    
-            self.instructions.append(Instruction.init(.jump_if_nequal, 0, self.current.line)) catch unreachable;
+            self.instructions.append(Instruction.init(.jump_if_nequal, Value.number(0), self.current.line)) catch unreachable;
             self.last_if_indices.append(self.instructions.items.len - 1) catch unreachable;
 
             while (self.current.kind != .end) {
@@ -253,12 +253,12 @@ pub const Compiler = struct {
     }
 
     fn create_if_jump(self:*Compiler) void {
-        self.instructions.append(Instruction.init(.jump_if_nequal, 0, self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.jump_if_nequal, Value.number(0), self.current.line)) catch unreachable;
         self.last_if_indices.append(self.instructions.items.len - 1) catch unreachable;
     }
 
     fn patch_jump(self:*Compiler) void {
-        self.instructions.items[self.last_if_indices.pop().?].value = self.instructions.items.len;
+        self.instructions.items[self.last_if_indices.pop().?].value = Value.number(self.instructions.items.len);
     }
 
     fn elseif(self:*Compiler) void {
@@ -316,7 +316,7 @@ pub const Compiler = struct {
 
         _ = self.expect(.ret,"return");
         self.expression(true);
-        self.instructions.append(Instruction.init(.ret,0,self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.ret,Value.nil(),self.current.line)) catch unreachable;
     }
 
     fn variable(self:*Compiler) void {
@@ -341,13 +341,13 @@ pub const Compiler = struct {
  
         const ikind = if (is_global) InstructionType.gstore else InstructionType.store;
 
-        self.instructions.append(Instruction.init(ikind,id,name.line)) catch unreachable;
+        self.instructions.append(Instruction.init(ikind,Value.number(id),name.line)) catch unreachable;
     }
 
     fn print(self:*Compiler) void {
         _ = self.expect(.print, "print");
         self.expression(false);
-        self.instructions.append(Instruction.init(.print, 0, self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.print, Value.number(0), self.current.line)) catch unreachable;
     }
 
     fn while_loop(self:*Compiler) void {
@@ -355,7 +355,7 @@ pub const Compiler = struct {
         const expr_index = self.instructions.items.len;
         self.expression(false);
         _ = self.expect(.keyword_do, "do");
-        self.instructions.append(Instruction.init(.jump_if_nequal, 0, self.current.line)) catch unreachable;
+        self.instructions.append(Instruction.init(.jump_if_nequal, Value.number(0), self.current.line)) catch unreachable;
         const jump_index = self.instructions.items.len - 1;
 
         self.begin_scope();
@@ -364,8 +364,8 @@ pub const Compiler = struct {
         }
         self.end_scope();
         _ = self.expect(.end, "end");
-        self.instructions.append(Instruction.init(.jump, expr_index, self.current.line)) catch unreachable;
-        self.instructions.items[jump_index].value = self.instructions.items.len;
+        self.instructions.append(Instruction.init(.jump, Value.number(expr_index), self.current.line)) catch unreachable;
+        self.instructions.items[jump_index].value = Value.number(self.instructions.items.len);
     }
 
     fn statement(self:*Compiler) void {

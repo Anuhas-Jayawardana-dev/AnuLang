@@ -1,2 +1,5 @@
 func main()
+    i = 1
+    while i != 18 do
+    end
 end

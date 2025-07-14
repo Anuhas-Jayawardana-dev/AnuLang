@@ -12,6 +12,7 @@ with syntax that's mostly similar to Lua
 - While loops
 - Printing to stdout
 - comments
+- multiple data-types
 
 ## Syntax
 
@@ -24,7 +25,11 @@ end
 
 # functions use the 'func' prefix
 func main()
-    i = 0
+    # variables can be of multiple data-types
+    i = 0 # numbers
+    name = "anu" # strings
+    is_cool = true # booleans
+
     # comments use the '#' prefix
     # we have if statements like these
     # notice how AnuLang uses != unlike Lua which uses ~=
